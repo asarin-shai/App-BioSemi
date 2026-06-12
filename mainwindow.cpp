@@ -6,6 +6,7 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/filesystem.hpp>
+#include <cstdlib>
 #include "Resampler.h"
 
 // send a chunk every approx. this many ms
@@ -300,6 +301,17 @@ const double coeffs_128x_lp[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	1.835413e-06, 1.466607e-06, 1.139114e-06, 8.529708e-07, 6.081630e-07, 4.046232e-07, 2.422325e-07, 1.208207e-07, 4.016681e-08, 4.918071e-22, -4.902970e-22};
 
 
+static const char* get_env(const char *k) { return std::getenv(k); }
+static bool env_true(const char *k) {
+	const char *v = std::getenv(k);
+	if (!v) return false;
+	std::string s(v);
+	boost::algorithm::to_lower(s);
+	return s=="1" || s=="true" || s=="yes" || s=="on";
+}
+
+
+
 MainWindow::MainWindow(QWidget *parent, const std::string &config_file) :
 QMainWindow(parent),
 ui(new Ui::MainWindow)
@@ -315,6 +327,9 @@ ui(new Ui::MainWindow)
 	QObject::connect(ui->actionLoad_Configuration, SIGNAL(triggered()), this, SLOT(load_config_dialog()));
 	QObject::connect(ui->action_Save_Configuration, SIGNAL(triggered()), this, SLOT(save_config_dialog()));
 	QObject::connect(ui->browseLocation, SIGNAL(clicked()), this, SLOT(load_chanlocs_dialog()));
+
+	if (env_true("BIOSEMI_AUTOCONNECT"))
+		connect_amp();
 }
 
 void MainWindow::load_config_dialog() {
@@ -386,6 +401,32 @@ void MainWindow::load_config(const std::string &filename) {
 
 		// assign resample flag
 		ui->resamplingOn->setCheckState(pt.get<bool>("recording.resample",true) ? Qt::Checked : Qt::Unchecked);
+
+
+		// apply optional environment overrides
+		if (const char *v = get_env("BIOSEMI_CAP_CIRCUMFERENCE"))
+			ui->capCircumference->setValue(boost::lexical_cast<int>(v));
+		if (const char *v = get_env("BIOSEMI_CAP_KNOWNSCHEMES")) {
+			std::vector<std::string> envschemes;
+			boost::algorithm::split(envschemes, std::string(v), boost::algorithm::is_any_of(","), boost::algorithm::token_compress_on);
+			ui->capDesign->clear();
+			for (size_t k=0; k<envschemes.size(); k++) {
+				boost::algorithm::trim_if(envschemes[k],boost::algorithm::is_any_of(" '\""));
+				if (!envschemes[k].empty()) ui->capDesign->addItem(envschemes[k].c_str());
+			}
+		}
+		if (const char *v = get_env("BIOSEMI_CAP_DEFAULTSCHEME")) {
+			int idx = ui->capDesign->findText(v);
+			if (idx >= 0) ui->capDesign->setCurrentIndex(idx);
+		}
+		if (const char *v = get_env("BIOSEMI_LOCATIONS_FILENAME"))
+			ui->capLocation->setText(v);
+		if (const char *v = get_env("BIOSEMI_REFERENCE_CHANNELS"))
+			ui->referenceChannels->setText(v);
+		if (const char *v = get_env("BIOSEMI_RECORDING_CHANSUBSET"))
+			ui->channelSubset->setCurrentIndex(boost::lexical_cast<int>(v));
+		if (const char *v = get_env("BIOSEMI_RECORDING_RESAMPLE"))
+			ui->resamplingOn->setCheckState(env_true("BIOSEMI_RECORDING_RESAMPLE") ? Qt::Checked : Qt::Unchecked);
 
 	} catch(std::exception &e) {
 		std::cout << "Problem parsing config file: " << e.what() << std::endl;
